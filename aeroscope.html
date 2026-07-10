@@ -164,6 +164,8 @@
   .wc-day .t .hi{ color:var(--text-hi); }
   .wc-day .t .lo{ color:var(--text-lo); }
   .wc-day .p{ color:var(--cyan); font-size:8.5px; }
+  .wc-day .w{ color:var(--text-lo); font-size:8px; display:flex; align-items:center; gap:1px; font-family:'IBM Plex Mono', monospace; }
+  .wc-arrow{ color:var(--amber); }
   .wc-loading, .wc-error{ font-size:11.5px; color:var(--text-lo); padding:4px 0; }
 
   /* ---------- Coordinate readout / Legend ---------- */
@@ -479,6 +481,7 @@
   }));
 
   map.attributionControl.addAttribution('Wind: <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a>');
+  map.attributionControl.addAttribution('Geocoding: <a href="https://nominatim.openstreetmap.org/" target="_blank">Nominatim</a>');
 
   function setLayerDatesSmooth(dateStr) {
     const nextIdx = currentIdx === 0 ? 1 : 0;
@@ -748,6 +751,14 @@
     95:['⛈️','雷雨'], 96:['⛈️','雷雨挾冰雹'], 99:['⛈️','強雷雨挾冰雹']
   };
   function wmoInfo(code){ return WMO_CODE[code] || ['🌡️','未知天氣']; }
+  function degToCompass(deg){
+    const dirs = ['北','東北','東','東南','南','西南','西','西北'];
+    return dirs[Math.round(deg / 45) % 8];
+  }
+  // 以「↓」（預設朝南）為基底旋轉，rotate(氣象風向deg) 即可正確指向風吹去的方向
+  function windArrowHtml(deg, size){
+    return `<span class="wc-arrow" style="display:inline-block;transform:rotate(${deg}deg);font-size:${size}px;">↓</span>`;
+  }
   function weekdayLabel(dateStr, idx){
     if (idx === 0) return '今天';
     const d = new Date(dateStr + 'T00:00:00');
@@ -756,12 +767,25 @@
 
   function buildLocalWeatherUrl(lat, lon){
     return `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-      `&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m` +
-      `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max` +
+      `&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,wind_direction_10m` +
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant` +
       `&wind_speed_unit=ms&forecast_days=7&timezone=auto`;
   }
 
-  function renderWeatherCard(data){
+  function buildReverseGeocodeUrl(lat, lon){
+    return `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=12&addressdetails=1&accept-language=zh-TW,zh,en`;
+  }
+
+  function extractPlaceName(geo){
+    if (!geo || !geo.address) return null;
+    const a = geo.address;
+    const locality = a.city || a.town || a.township || a.village || a.suburb || a.county;
+    const region = a.state || a.county;
+    if (locality && region && locality !== region) return `${region} ${locality}`;
+    return locality || region || a.country || null;
+  }
+
+  function renderWeatherCard(data, placeName){
     const cur = data.current;
     const [curEmoji, curDesc] = wmoInfo(cur.weather_code);
     const daily = data.daily;
@@ -770,22 +794,30 @@
       const hi = Math.round(daily.temperature_2m_max[i]);
       const lo = Math.round(daily.temperature_2m_min[i]);
       const pop = daily.precipitation_probability_max[i];
+      const windDeg = daily.wind_direction_10m_dominant[i];
+      const windSpeed = daily.wind_speed_10m_max[i];
       return `<div class="wc-day">
         <div class="d">${weekdayLabel(t, i)}</div>
         <div class="e">${emoji}</div>
         <div class="t"><span class="hi">${hi}°</span>/<span class="lo">${lo}°</span></div>
         <div class="p">${pop != null ? pop + '%' : ''}</div>
+        <div class="w">${windDeg != null ? windArrowHtml(windDeg, 10) : ''}${windSpeed != null ? Math.round(windSpeed) : ''}</div>
       </div>`;
     }).join('');
 
+    const curWindDeg = cur.wind_direction_10m;
+    const curWindHtml = curWindDeg != null
+      ? `${windArrowHtml(curWindDeg, 12)} ${degToCompass(curWindDeg)}風 ${curWindDeg}°`
+      : '';
+
     return `<div class="weather-card mono">
-      <div class="wc-header">目前位置天氣</div>
+      <div class="wc-header">${placeName ? placeName : '目前位置'} 天氣</div>
       <div class="wc-current">
         <div class="wc-emoji">${curEmoji}</div>
         <div class="wc-meta">
           <div class="wc-temp">${Math.round(cur.temperature_2m)}°C</div>
           <div class="wc-desc">${curDesc}</div>
-          <div class="wc-extra">濕度 ${cur.relative_humidity_2m}% · 風速 ${cur.wind_speed_10m.toFixed(1)} m/s</div>
+          <div class="wc-extra">濕度 ${cur.relative_humidity_2m}% · 風速 ${cur.wind_speed_10m.toFixed(1)} m/s ${curWindHtml}</div>
         </div>
       </div>
       <div class="wc-week">${dayCells}</div>
@@ -793,11 +825,17 @@
   }
 
   function fetchAndRenderWeather(lat, lon, setContent){
-    fetch(buildLocalWeatherUrl(lat, lon))
-      .then(r => { if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then(data => {
+    const weatherPromise = fetch(buildLocalWeatherUrl(lat, lon))
+      .then(r => { if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); });
+    // 反向地理編碼失敗不應該擋住天氣資料顯示，所以錯誤時回傳 null 即可
+    const geoPromise = fetch(buildReverseGeocodeUrl(lat, lon))
+      .then(r => r.ok ? r.json() : null)
+      .catch(() => null);
+
+    Promise.all([weatherPromise, geoPromise])
+      .then(([data, geo]) => {
         if (data.error) throw new Error(data.reason || '未知錯誤');
-        setContent(renderWeatherCard(data));
+        setContent(renderWeatherCard(data, extractPlaceName(geo)));
       })
       .catch(err => {
         setContent(`<div class="weather-card mono"><div class="wc-error">⚠ 天氣資料載入失敗：${err.message}</div></div>`);
