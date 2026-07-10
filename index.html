@@ -139,6 +139,33 @@
   #locateBtn.busy svg{ animation:spin 1s linear infinite; }
   @keyframes spin{ to{ transform:rotate(360deg); } }
 
+  .leaflet-popup-content-wrapper{
+    background:var(--panel-solid) !important; color:var(--text-hi) !important;
+    border:1px solid var(--line); border-radius:12px !important;
+    box-shadow:0 10px 30px rgba(0,0,0,.45) !important;
+  }
+  .leaflet-popup-tip{ background:var(--panel-solid) !important; }
+  .leaflet-popup-content{ margin:12px 14px !important; }
+  .leaflet-popup-close-button{ color:var(--text-lo) !important; }
+
+  .weather-card{ font-family:'Space Grotesk', system-ui, sans-serif; min-width:220px; }
+  .wc-header{ font-size:11px; color:var(--text-lo); letter-spacing:.05em; margin-bottom:6px; }
+  .wc-current{ display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+  .wc-current .wc-emoji{ font-size:28px; line-height:1; }
+  .wc-current .wc-temp{ font-size:22px; font-weight:700; }
+  .wc-current .wc-meta{ display:flex; flex-direction:column; margin-left:2px; }
+  .wc-current .wc-desc{ font-size:12px; color:var(--text-hi); }
+  .wc-current .wc-extra{ font-size:10px; color:var(--text-lo); font-family:'IBM Plex Mono', monospace; }
+  .wc-week{ display:flex; gap:4px; border-top:1px solid var(--line); padding-top:8px; }
+  .wc-day{ flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; font-size:9.5px; }
+  .wc-day .d{ color:var(--text-lo); }
+  .wc-day .e{ font-size:15px; margin:1px 0; }
+  .wc-day .t{ font-family:'IBM Plex Mono', monospace; font-size:9px; }
+  .wc-day .t .hi{ color:var(--text-hi); }
+  .wc-day .t .lo{ color:var(--text-lo); }
+  .wc-day .p{ color:var(--cyan); font-size:8.5px; }
+  .wc-loading, .wc-error{ font-size:11.5px; color:var(--text-lo); padding:4px 0; }
+
   /* ---------- Coordinate readout / Legend ---------- */
   #infoStack{
     position:absolute; top:16px; right:16px; z-index:900;
@@ -292,7 +319,7 @@
 </div>
 
 <div id="infoStack">
-  <div id="coordReadout" class="mono">緯度 <b id="latVal">--</b> 經度 <b id="lngVal">--</b></div>
+  <div id="coordReadout" class="mono">緯度 <b id="latVal">--</b> 經度 <b id="lngVal">--</b><span style="display:block;margin-top:2px;opacity:.65;">點擊地圖查天氣</span></div>
   <div id="legend">
     <div class="lg-title">風速 (m/s)</div>
     <div class="bar"></div>
@@ -707,7 +734,82 @@
     if (document.getElementById('toggleSat').checked) { satLayers[currentIdx].setOpacity(userOpacity); }
   });
 
-  // 6. Geolocation 定位
+  // 6. Geolocation 定位 + 當地天氣／未來一週預報
+  const WMO_CODE = {
+    0:['☀️','晴朗'], 1:['🌤️','大致晴朗'], 2:['⛅','多雲時晴'], 3:['☁️','陰天'],
+    45:['🌫️','起霧'], 48:['🌫️','霧凇'],
+    51:['🌦️','毛毛雨'], 53:['🌦️','毛毛雨'], 55:['🌦️','強毛毛雨'],
+    56:['🌧️','凍雨'], 57:['🌧️','強凍雨'],
+    61:['🌧️','小雨'], 63:['🌧️','中雨'], 65:['🌧️','大雨'],
+    66:['🌧️','凍雨'], 67:['🌧️','強凍雨'],
+    71:['🌨️','小雪'], 73:['🌨️','中雪'], 75:['🌨️','大雪'], 77:['🌨️','霰'],
+    80:['🌦️','短暫陣雨'], 81:['🌦️','陣雨'], 82:['⛈️','強陣雨'],
+    85:['🌨️','陣雪'], 86:['🌨️','強陣雪'],
+    95:['⛈️','雷雨'], 96:['⛈️','雷雨挾冰雹'], 99:['⛈️','強雷雨挾冰雹']
+  };
+  function wmoInfo(code){ return WMO_CODE[code] || ['🌡️','未知天氣']; }
+  function weekdayLabel(dateStr, idx){
+    if (idx === 0) return '今天';
+    const d = new Date(dateStr + 'T00:00:00');
+    return '週' + ['日','一','二','三','四','五','六'][d.getDay()];
+  }
+
+  function buildLocalWeatherUrl(lat, lon){
+    return `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m` +
+      `&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max` +
+      `&wind_speed_unit=ms&forecast_days=7&timezone=auto`;
+  }
+
+  function renderWeatherCard(data){
+    const cur = data.current;
+    const [curEmoji, curDesc] = wmoInfo(cur.weather_code);
+    const daily = data.daily;
+    const dayCells = daily.time.map((t, i) => {
+      const [emoji] = wmoInfo(daily.weather_code[i]);
+      const hi = Math.round(daily.temperature_2m_max[i]);
+      const lo = Math.round(daily.temperature_2m_min[i]);
+      const pop = daily.precipitation_probability_max[i];
+      return `<div class="wc-day">
+        <div class="d">${weekdayLabel(t, i)}</div>
+        <div class="e">${emoji}</div>
+        <div class="t"><span class="hi">${hi}°</span>/<span class="lo">${lo}°</span></div>
+        <div class="p">${pop != null ? pop + '%' : ''}</div>
+      </div>`;
+    }).join('');
+
+    return `<div class="weather-card mono">
+      <div class="wc-header">目前位置天氣</div>
+      <div class="wc-current">
+        <div class="wc-emoji">${curEmoji}</div>
+        <div class="wc-meta">
+          <div class="wc-temp">${Math.round(cur.temperature_2m)}°C</div>
+          <div class="wc-desc">${curDesc}</div>
+          <div class="wc-extra">濕度 ${cur.relative_humidity_2m}% · 風速 ${cur.wind_speed_10m.toFixed(1)} m/s</div>
+        </div>
+      </div>
+      <div class="wc-week">${dayCells}</div>
+    </div>`;
+  }
+
+  function fetchAndRenderWeather(lat, lon, setContent){
+    fetch(buildLocalWeatherUrl(lat, lon))
+      .then(r => { if(!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then(data => {
+        if (data.error) throw new Error(data.reason || '未知錯誤');
+        setContent(renderWeatherCard(data));
+      })
+      .catch(err => {
+        setContent(`<div class="weather-card mono"><div class="wc-error">⚠ 天氣資料載入失敗：${err.message}</div></div>`);
+        console.error(err);
+      });
+  }
+
+  function loadLocalWeather(marker, lat, lon){
+    marker.bindPopup('<div class="weather-card mono"><div class="wc-loading">正在載入當地天氣與未來一週預報…</div></div>').openPopup();
+    fetchAndRenderWeather(lat, lon, html => marker.setPopupContent(html));
+  }
+
   let geoMarker = null;
   document.getElementById('locateBtn').addEventListener('click', function(){
     if (!navigator.geolocation){ showToast('此瀏覽器不支援地理定位', 3000); return; }
@@ -724,10 +826,24 @@
         geoMarker = L.marker([latitude, longitude], { icon }).addTo(map);
         map.flyTo([latitude, longitude], 7, { duration: 1.2 });
         showToast(`已定位到 ${latitude.toFixed(3)}°, ${longitude.toFixed(3)}°`, 3000);
+        loadLocalWeather(geoMarker, latitude, longitude);
       },
       err => { btn.classList.remove('busy'); showToast('無法取得位置，請確認定位權限', 3500); },
       { enableHighAccuracy: true, timeout: 8000 }
     );
+  });
+
+  // 7. 點擊地圖任一位置查詢當地天氣與未來 7 天預報
+  map.on('click', e => {
+    const { lat, lng } = e.latlng;
+    const clickPopup = L.popup({ maxWidth: 260, closeButton: true })
+      .setLatLng(e.latlng)
+      .setContent('<div class="weather-card mono"><div class="wc-loading">正在載入當地天氣與未來一週預報…</div></div>')
+      .openOn(map);
+    fetchAndRenderWeather(lat, lng, html => {
+      // 若使用者已關閉彈窗或點了別處，就不再更新舊的彈窗內容
+      if (map.hasLayer(clickPopup)) clickPopup.setContent(html);
+    });
   });
 
 })();
