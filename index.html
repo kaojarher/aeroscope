@@ -181,6 +181,19 @@
   #dateLabel{ font-size:13px; font-weight:600; min-width:118px; }
   #dateLabel .tag{ display:block; font-size:9.5px; color:var(--text-lo); font-weight:400; letter-spacing:.06em; margin-top:1px;}
   #timeSlider{ flex:1; accent-color:var(--cyan); }
+  #tickTrack{ position:relative; height:16px; margin-top:2px; padding:0 2px; }
+  #tickMarker{
+    position:absolute; top:0; transform:translateX(-50%);
+    font-size:10px; font-weight:700; color:var(--cyan);
+    white-space:nowrap; pointer-events:none;
+    transition:left .12s ease;
+  }
+  #tickMarker::after{
+    content:''; position:absolute; left:50%; top:100%;
+    transform:translateX(-50%);
+    border-left:4px solid transparent; border-right:4px solid transparent;
+    border-top:5px solid var(--cyan);
+  }
   #ticks{ display:flex; justify-content:space-between; font-size:9px; color:var(--text-lo); margin-top:4px; padding:0 2px;}
 
   #quickLinks{
@@ -228,6 +241,8 @@
     0%{ transform:scale(.3); opacity:.9;} 100%{ transform:scale(2.6); opacity:0;}
   }
 
+  #modelPanelMobile{ display:none; }
+
   @media (max-width:640px){
     #legend, #modelPanel{ display:none; }
     #brandbar .sub{ display:none; }
@@ -239,6 +254,19 @@
     .toggle-group{ order:1; flex:1 1 auto; gap:6px; }
     #locateBtn{ order:2; }
     #opacityWrap{ order:3; flex:1 1 100%; border-left:none; border-top:1px solid var(--line); padding-top:6px; margin-top:2px; }
+
+    #modelPanelMobile{
+      display:flex; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch;
+      background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+      padding:8px; backdrop-filter:blur(10px); box-shadow:0 8px 24px rgba(0,0,0,.3);
+    }
+    #modelPanelMobile::-webkit-scrollbar{ display:none; }
+    .model-btn-mobile{
+      flex:none; padding:8px 14px; border-radius:20px; font-size:12px; font-weight:600;
+      background:#151f36; border:1px solid var(--line); color:var(--text-lo);
+      cursor:pointer; white-space:nowrap; -webkit-tap-highlight-color:transparent;
+    }
+    .model-btn-mobile.active{ background:var(--cyan); color:#04202a; border-color:var(--cyan); }
   }
 </style>
 </head>
@@ -277,6 +305,11 @@
 </div>
 
 <div id="bottomDock">
+  <div id="modelPanelMobile" class="mono">
+    <button class="model-btn-mobile active" data-model="ecmwf_ifs_025">ECMWF</button>
+    <button class="model-btn-mobile" data-model="gfs_seamless">GFS</button>
+    <button class="model-btn-mobile" data-model="icon_seamless">ICON</button>
+  </div>
   <div id="controlBar">
     <div class="toggle-group">
       <label class="chip active" id="chipWind">
@@ -313,6 +346,7 @@
       <div id="dateLabel" class="mono">--<span class="tag">數值預報日期 (UTC)</span></div>
       <input type="range" id="timeSlider" min="0" max="18" value="9" step="1">
     </div>
+    <div id="tickTrack"><div id="tickMarker" class="mono">今日</div></div>
     <div id="ticks" class="mono"><span>-9d</span><span>-6d</span><span>-3d</span><span>今日</span><span>+3d</span><span>+6d</span><span>+9d</span></div>
   </div>
 
@@ -552,14 +586,15 @@
       });
   }
 
-  // 3. 多模型切換 UI 事件監聽
-  document.querySelectorAll('.model-btn').forEach(btn => {
+  // 3. 多模型切換 UI 事件監聽（桌面版與手機版共用同一組邏輯，點任一邊都會同步）
+  document.querySelectorAll('.model-btn, .model-btn-mobile').forEach(btn => {
     btn.addEventListener('click', function() {
-      if (this.classList.contains('active')) return;
-      document.querySelectorAll('.model-btn').forEach(b => b.classList.remove('active'));
-      this.classList.add('active');
-      
-      currentModel = this.getAttribute('data-model');
+      const model = this.getAttribute('data-model');
+      if (model === currentModel) return;
+      document.querySelectorAll('.model-btn, .model-btn-mobile').forEach(b => {
+        b.classList.toggle('active', b.getAttribute('data-model') === model);
+      });
+      currentModel = model;
       loadWindGrid(DAYS_PAST, DAYS_FUTURE + 1); // 重新載入對應氣象局的模型資料（含未來預報）
     });
   });
@@ -589,6 +624,14 @@
     const relative = idx - TODAY_IDX;
     const relTxt = relative === 0 ? '今日' : (relative < 0 ? `−${-relative} 天` : `+${relative} 天（預報）`);
     label.innerHTML = dateList[idx] + `<span class="tag">${relTxt} · 數值預報／觀測日期 (UTC)</span>`;
+    updateTickMarker(idx);
+  }
+  function updateTickMarker(idx){
+    const marker = document.getElementById('tickMarker');
+    const pct = (idx / (DAYS - 1)) * 100;
+    marker.style.left = pct + '%';
+    const relative = idx - TODAY_IDX;
+    marker.textContent = relative === 0 ? '今日' : (relative < 0 ? `−${-relative}d` : `+${relative}d`);
   }
   function applyLayersForIndex(idx){
     isFutureIdx = idx > TODAY_IDX;
