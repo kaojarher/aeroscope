@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>AeroScope｜多模型即時風場與衛星雲圖</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.css" />
+
+<style>
+  :root{
+    --bg-deep:#0a0e1a;
+    --panel:#0f1729cc;
+    --panel-solid:#111a2e;
+    --line:#233047;
+    --text-hi:#e8edf7;
+    --text-lo:#8a97b3;
+    --cyan:#43d9e0;
+    --amber:#f2b544;
+    --violet:#8b7cf6;
+    --danger:#f2545b;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0; padding:0; height:100%; width:100%;
+    background:var(--bg-deep);
+    font-family:'Space Grotesk', system-ui, sans-serif;
+    color:var(--text-hi);
+    overflow:hidden;
+  }
+  #map{
+    position:absolute; inset:0; background:#c9cdd4;
+  }
+  .mono{ font-family:'IBM Plex Mono', monospace; }
+
+  .leaflet-layer {
+    transition: opacity 0.6s cubic-bezier(0.25, 1, 0.5, 1) !important;
+  }
+
+  /* ---------- Top brand bar ---------- */
+  #brandbar{
+    position:absolute; top:16px; left:16px; z-index:900;
+    display:flex; align-items:center; gap:10px;
+    padding:10px 16px 10px 12px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    backdrop-filter:blur(10px);
+    box-shadow:0 8px 24px rgba(0,0,0,.35);
+  }
+  #brandbar .dot{
+    width:10px;height:10px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #7ff0f5, var(--cyan));
+    box-shadow:0 0 12px var(--cyan);
+    flex:none;
+  }
+  #brandbar .title{ font-weight:700; font-size:15px; letter-spacing:.02em; }
+  #brandbar .sub{ font-size:10.5px; color:var(--text-lo); letter-spacing:.04em; }
+
+  #baseMapToggle{
+    position:absolute; top:80px; left:16px; z-index:900;
+    padding:8px 14px; font-size:11.5px; font-weight:600;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    color:var(--text-hi); backdrop-filter:blur(10px);
+    box-shadow:0 6px 20px rgba(0,0,0,.25); cursor:pointer;
+  }
+  #baseMapToggle:hover{ border-color:var(--cyan); }
+
+  /* ---------- Model Selector (Windy Style) ---------- */
+  #modelPanel{
+    position:absolute; top:125px; left:16px; z-index:900;
+    display:flex; flex-direction:column; gap:4px;
+    padding:6px; background:var(--panel);
+    border:1px solid var(--line); border-radius:10px;
+    backdrop-filter:blur(10px); box-shadow:0 6px 20px rgba(0,0,0,.25);
+  }
+  .model-btn{
+    background:transparent; border:none; color:var(--text-lo);
+    padding:6px 12px; border-radius:6px; cursor:pointer; text-align:left;
+    font-size:11.5px; font-weight:500; transition:.15s; display:flex; flex-direction:column;
+  }
+  .model-btn span{ font-size:9px; color:var(--text-lo); opacity:0.7; font-weight:400; margin-top:1px; }
+  .model-btn:hover{ background:rgba(255,255,255,0.05); color:var(--text-hi); }
+  .model-btn.active{ background:var(--cyan); color:#04202a; }
+  .model-btn.active span{ color:#04202a; opacity:0.8; }
+
+  /* ---------- Bottom dock ---------- */
+  #bottomDock{
+    position:absolute; left:50%; bottom:16px; transform:translateX(-50%);
+    z-index:900; width:min(760px, calc(100vw - 24px));
+    display:flex; flex-direction:column; gap:10px;
+  }
+
+  /* ---------- Control Bar ---------- */
+  #controlBar{
+    display:flex; align-items:center; gap:10px;
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); backdrop-filter:blur(10px);
+    box-shadow:0 8px 24px rgba(0,0,0,.35); padding:9px 10px;
+  }
+  .toggle-group{ display:flex; gap:8px; flex:none; }
+  .chip{
+    display:flex; align-items:center; gap:6px;
+    padding:8px 12px; border-radius:20px;
+    background:#151f36; border:1px solid var(--line);
+    cursor:pointer; font-size:12.5px; white-space:nowrap;
+    -webkit-tap-highlight-color:transparent; user-select:none; transition:.15s;
+  }
+  .chip input{ display:none; }
+  .chip .swatch{ width:8px;height:8px;border-radius:50%; flex:none; opacity:.5; }
+  .sw-wind{ background:var(--cyan); }
+  .sw-sat{ background:var(--violet); }
+  .sw-precip{ background:#4f9df7; }
+  .chip.active{ border-color:var(--cyan); background:#0f2c37; }
+  .chip.active .swatch{ opacity:1; box-shadow:0 0 8px currentColor; }
+  .chip.active .sw-wind{ box-shadow:0 0 8px var(--cyan); }
+  .chip.active .sw-sat{ box-shadow:0 0 8px var(--violet); }
+  .chip.active .sw-precip{ box-shadow:0 0 8px #4f9df7; }
+
+  #opacityWrap{
+    flex:1; min-width:70px; display:flex; align-items:center; gap:8px;
+    padding:0 4px; border-left:1px solid var(--line);
+  }
+  #opacityWrap label{ font-size:10.5px; color:var(--text-lo); flex:none; white-space:nowrap; }
+  input[type="range"].mini{ width:100%; accent-color:var(--violet); height:14px; }
+
+  #locateBtn{
+    flex:none; width:38px; height:38px;
+    background:var(--panel-solid); border:1px solid var(--line);
+    border-radius:10px; color:var(--text-hi);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+  }
+  #locateBtn:hover{ border-color:var(--cyan); }
+  #locateBtn.busy svg{ animation:spin 1s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  /* ---------- Coordinate readout / Legend ---------- */
+  #infoStack{
+    position:absolute; top:16px; right:16px; z-index:900;
+    display:flex; flex-direction:column; align-items:flex-end; gap:10px;
+  }
+  #coordReadout{
+    padding:6px 10px; font-size:11px; color:var(--text-lo);
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:8px; backdrop-filter:blur(8px);
+  }
+  #coordReadout b{ color:var(--text-hi); }
+
+  #legend{
+    width:170px; padding:10px 12px;
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; backdrop-filter:blur(10px);
+  }
+  #legend .lg-title{ font-size:10.5px; color:var(--text-lo); letter-spacing:.08em; text-transform:uppercase; margin-bottom:6px;}
+  #legend .bar{
+    height:8px; border-radius:4px;
+    background:linear-gradient(90deg,#3a86e0,#43d9e0,#8be07a,#f2d544,#f2924a,#f2545b);
+  }
+  #legend .scale{ display:flex; justify-content:space-between; font-size:9.5px; color:var(--text-lo); margin-top:4px; }
+
+  /* ---------- Timeline ---------- */
+  #timeline{
+    width:100%;
+    background:var(--panel); border:1px solid var(--line);
+    border-radius:var(--radius); backdrop-filter:blur(10px);
+    padding:12px 16px 10px; box-shadow:0 10px 28px rgba(0,0,0,.4);
+  }
+  #timeline .row1{ display:flex; align-items:center; gap:12px; }
+  #playBtn{
+    flex:none; width:34px; height:34px; border-radius:50%;
+    background:linear-gradient(135deg, var(--cyan), #2a8fa0);
+    border:none; color:#04202a; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 0 14px rgba(67,217,224,.4);
+  }
+  #dateLabel{ font-size:13px; font-weight:600; min-width:118px; }
+  #dateLabel .tag{ display:block; font-size:9.5px; color:var(--text-lo); font-weight:400; letter-spacing:.06em; margin-top:1px;}
+  #timeSlider{ flex:1; accent-color:var(--cyan); }
+  #ticks{ display:flex; justify-content:space-between; font-size:9px; color:var(--text-lo); margin-top:4px; padding:0 2px;}
+
+  #quickLinks{
+    display:flex; gap:8px; width:100%;
+  }
+  .quick-link-btn{
+    flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
+    padding:10px 12px; border-radius:var(--radius);
+    background:var(--panel); border:1px solid var(--line);
+    backdrop-filter:blur(10px); box-shadow:0 8px 24px rgba(0,0,0,.3);
+    color:var(--text-hi); font-size:12.5px; font-weight:600;
+    text-decoration:none; cursor:pointer; transition:.15s;
+    white-space:nowrap;
+  }
+  .quick-link-btn:hover{ border-color:var(--cyan); background:#0f2c37; }
+  .quick-link-btn .dot-a{ width:8px; height:8px; border-radius:50%; background:var(--amber); flex:none; box-shadow:0 0 8px var(--amber); }
+  .quick-link-btn .dot-b{ width:8px; height:8px; border-radius:50%; background:var(--violet); flex:none; box-shadow:0 0 8px var(--violet); }
+
+  #toast{
+    position:absolute; top:16px; left:50%; transform:translateX(-50%);
+    z-index:1000; padding:8px 16px; font-size:12px;
+    background:var(--panel-solid); border:1px solid var(--line);
+    border-radius:20px; color:var(--text-lo); display:none;
+  }
+  #toast.show{ display:block; }
+
+  .leaflet-control-attribution{
+    background:rgba(10,14,26,.65) !important; color:var(--text-lo) !important; font-size:10px !important;
+  }
+  .leaflet-control-attribution a{ color:#9fb0d6 !important; }
+  .leaflet-control-zoom a{
+    background:var(--panel-solid) !important; color:var(--text-hi) !important; border-color:var(--line) !important;
+  }
+
+  .geo-pulse{ position:relative; width:16px; height:16px; }
+  .geo-pulse .core{
+    position:absolute; left:4px; top:4px; width:8px; height:8px; border-radius:50%;
+    background:var(--cyan); box-shadow:0 0 10px var(--cyan);
+  }
+  .geo-pulse .ring{
+    position:absolute; inset:0; border-radius:50%;
+    border:2px solid var(--cyan); animation:pulse 1.8s ease-out infinite;
+  }
+  @keyframes pulse{
+    0%{ transform:scale(.3); opacity:.9;} 100%{ transform:scale(2.6); opacity:0;}
+  }
+
+  @media (max-width:640px){
+    #legend, #modelPanel{ display:none; }
+    #brandbar .sub{ display:none; }
+    #bottomDock{ width:calc(100vw - 16px); }
+    #timeline{ padding:10px 12px 8px; }
+    #dateLabel{ min-width:78px; font-size:11.5px; }
+    .chip{ padding:7px 9px; font-size:11px; }
+    #controlBar{ padding:8px; gap:8px; flex-wrap:wrap; }
+    .toggle-group{ order:1; flex:1 1 auto; gap:6px; }
+    #locateBtn{ order:2; }
+    #opacityWrap{ order:3; flex:1 1 100%; border-left:none; border-top:1px solid var(--line); padding-top:6px; margin-top:2px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div id="toast" class="mono"></div>
+
+<div id="brandbar">
+  <div class="dot"></div>
+  <div>
+    <div class="title">AeroScope</div>
+    <div class="sub mono">多模型數值天氣預報整合系統</div>
+  </div>
+</div>
+
+<button id="baseMapToggle" class="mono">切換為一般地圖</button>
+
+<div id="modelPanel" class="mono">
+  <button class="model-btn active" data-model="ecmwf_ifs_025">ECMWF<span>歐洲中期 (高精準)</span></button>
+  <button class="model-btn" data-model="gfs_seamless">GFS<span>美國全球預報系統</span></button>
+  <button class="model-btn" data-model="icon_seamless">ICON<span>德國區域高解析度</span></button>
+</div>
+
+<div id="infoStack">
+  <div id="coordReadout" class="mono">緯度 <b id="latVal">--</b> 經度 <b id="lngVal">--</b></div>
+  <div id="legend">
+    <div class="lg-title">風速 (m/s)</div>
+    <div class="bar"></div>
+    <div class="scale"><span>0</span><span>5</span><span>10</span><span>15+</span></div>
+    <div class="lg-title" style="margin-top:10px;">降雨強度 (mm/hr)</div>
+    <div class="bar" style="background:linear-gradient(90deg,#2b6cf0 0%,#3fae4f 30%,#e8d13a 55%,#e8843a 75%,#d33a3a 100%);"></div>
+    <div class="scale"><span>微量</span><span>中</span><span>強</span><span>劇烈</span></div>
+    <div style="font-size:9.5px;color:var(--text-lo);margin-top:8px;line-height:1.4;">未來日期僅風場提供預報；ICON 模型預報涵蓋約至 +7 天，超過則以 GFS/ECMWF 較準確</div>
+  </div>
+</div>
+
+<div id="bottomDock">
+  <div id="controlBar">
+    <div class="toggle-group">
+      <label class="chip active" id="chipWind">
+        <input type="checkbox" id="toggleWind" checked>
+        <span class="swatch sw-wind"></span>風場
+      </label>
+      <label class="chip active" id="chipSat">
+        <input type="checkbox" id="toggleSat" checked>
+        <span class="swatch sw-sat"></span>雲圖
+      </label>
+      <label class="chip active" id="chipPrecip">
+        <input type="checkbox" id="togglePrecip" checked>
+        <span class="swatch sw-precip"></span>降雨</label>
+    </div>
+    <div id="opacityWrap">
+      <label>透明度</label>
+      <input type="range" class="mini" id="satOpacity" min="0" max="100" value="75">
+    </div>
+    <button id="locateBtn" title="定位到我的位置">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M12 2v3M12 19v3M2 12h3M19 12h3"></path>
+        <circle cx="12" cy="12" r="8"></circle>
+      </svg>
+    </button>
+  </div>
+
+  <div id="timeline">
+    <div class="row1">
+      <button id="playBtn" title="播放 / 暫停">
+        <svg id="playIcon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"></polygon></svg>
+        <svg id="pauseIcon" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="5" y="4" width="4" height="16"></rect><rect x="15" y="4" width="4" height="16"></rect></svg>
+      </button>
+      <div id="dateLabel" class="mono">--<span class="tag">數值預報日期 (UTC)</span></div>
+      <input type="range" id="timeSlider" min="0" max="18" value="9" step="1">
+    </div>
+    <div id="ticks" class="mono"><span>-9d</span><span>-6d</span><span>-3d</span><span>今日</span><span>+3d</span><span>+6d</span><span>+9d</span></div>
+  </div>
+
+  <div id="quickLinks">
+    <a class="quick-link-btn" href="https://www.dgpa.gov.tw/typh/daily/nds.html" target="_blank" rel="noopener noreferrer">
+      <span class="dot-a"></span>人事行政局 停班停課
+    </a>
+    <a class="quick-link-btn" href="https://www.1968services.tw/" target="_blank" rel="noopener noreferrer">
+      <span class="dot-b"></span>1968 路況資訊
+    </a>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-velocity@2.1.4/dist/leaflet-velocity.min.js"></script>
+
+<script>
+(function(){
+
+  // 0. 基礎地圖設定
+  const map = L.map('map', {
+    center: [23.6, 121.0], 
+    zoom: 4,
+    zoomControl: true,
+    worldCopyJump: true,
+    attributionControl: true
+  });
+
+  const baseLight = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd', maxZoom: 19
+  });
+
+  const baseSatellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics',
+    maxZoom: 19
+  });
+
+  let currentBase = 'satellite';
+  baseSatellite.addTo(map);
+
+  function setBaseMap(mode){
+    if (mode === currentBase) return;
+    if (mode === 'satellite'){
+      map.removeLayer(baseLight);
+      baseSatellite.addTo(map);
+    } else {
+      map.removeLayer(baseSatellite);
+      baseLight.addTo(map);
+    }
+    currentBase = mode;
+    const btn = document.getElementById('baseMapToggle');
+    btn.textContent = mode === 'satellite' ? '切換為一般地圖' : '切換為衛星地圖';
+  }
+  document.getElementById('baseMapToggle').addEventListener('click', () => {
+    setBaseMap(currentBase === 'satellite' ? 'light' : 'satellite');
+  });
+
+  map.on('mousemove', e => {
+    document.getElementById('latVal').textContent = e.latlng.lat.toFixed(2) + '°';
+    document.getElementById('lngVal').textContent = e.latlng.lng.toFixed(2) + '°';
+  });
+
+  function showToast(msg, autoHideMs){
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    if (autoHideMs){ clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('show'), autoHideMs); }
+  }
+  function hideToast(){ document.getElementById('toast').classList.remove('show'); }
+
+  // 1. 雙緩衝衛星雲圖與降雨圖層 (NASA GIBS)
+  const GIBS_LAYER = 'VIIRS_SNPP_CorrectedReflectance_TrueColor';
+  const GIBS_MATRIX = 'GoogleMapsCompatible_Level9';
+  const PRECIP_LAYER = 'IMERG_Precipitation_Rate';
+  const PRECIP_MATRIX = 'GoogleMapsCompatible_Level6';
+
+  function gibsUrl(dateStr){ return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${GIBS_LAYER}/default/${dateStr}/${GIBS_MATRIX}/{z}/{y}/{x}.jpg`; }
+  function precipUrl(dateStr){ return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/${PRECIP_LAYER}/default/${dateStr}/${PRECIP_MATRIX}/{z}/{y}/{x}.png`; }
+
+  let satLayers = [
+    L.tileLayer('', { tileSize: 256, minZoom: 1, maxNativeZoom: 9, maxZoom: 19, opacity: 0, attribution: 'Imagery: NASA GIBS' }),
+    L.tileLayer('', { tileSize: 256, minZoom: 1, maxNativeZoom: 9, maxZoom: 19, opacity: 0, attribution: 'Imagery: NASA GIBS' })
+  ];
+  let precipLayers = [
+    L.tileLayer('', { tileSize: 256, minZoom: 1, maxNativeZoom: 6, maxZoom: 19, opacity: 0, attribution: 'Precipitation: NASA GPM' }),
+    L.tileLayer('', { tileSize: 256, minZoom: 1, maxNativeZoom: 6, maxZoom: 19, opacity: 0, attribution: 'Precipitation: NASA GPM' })
+  ];
+
+  let currentIdx = 0;
+  let userOpacity = 0.75;
+
+  satLayers[0].addTo(map); satLayers[1].addTo(map);
+  precipLayers[0].addTo(map); precipLayers[1].addTo(map);
+
+  let satErrorShown = false, precipErrorShown = false;
+  satLayers.forEach(l => l.on('tileerror', () => {
+    if (satErrorShown) return; satErrorShown = true;
+    showToast('⚠ 雲圖圖磚載入失敗，該日期影像可能尚未發布或伺服器忙碌', 5000);
+  }));
+  precipLayers.forEach(l => l.on('tileerror', () => {
+    if (precipErrorShown) return; precipErrorShown = true;
+    showToast('⚠ 降雨圖磚載入失敗，該日期影像可能尚未發布或伺服器忙碌', 5000);
+  }));
+
+  map.attributionControl.addAttribution('Wind: <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a>');
+
+  function setLayerDatesSmooth(dateStr) {
+    const nextIdx = currentIdx === 0 ? 1 : 0;
+    const isSatEnabled = document.getElementById('toggleSat').checked;
+    const isPrecipEnabled = document.getElementById('togglePrecip').checked;
+
+    satLayers[nextIdx].setUrl(gibsUrl(dateStr));
+    precipLayers[nextIdx].setUrl(precipUrl(dateStr));
+
+    satLayers[nextIdx].once('load', () => {
+      if (isSatEnabled) { satLayers[nextIdx].setOpacity(userOpacity); satLayers[currentIdx].setOpacity(0); }
+      if (isPrecipEnabled) { precipLayers[nextIdx].setOpacity(0.85); precipLayers[currentIdx].setOpacity(0); }
+      currentIdx = nextIdx;
+    });
+  }
+
+  // 2. 多模型數值風場資料處理 (ECMWF, GFS, ICON)
+  let currentModel = 'ecmwf_ifs_025'; // 預設使用預報之王 ECMWF
+
+  const GRID_LAT_STEP = 20;
+  const GRID_LON_STEP = 20;
+  const GRID_LATS = [];
+  for (let la = 80; la >= -80; la -= GRID_LAT_STEP) GRID_LATS.push(la);
+  const GRID_LONS = [];
+  for (let lo = -180; lo <= 170; lo += GRID_LON_STEP) GRID_LONS.push(lo);
+  const GRID_POINTS = [];
+  GRID_LATS.forEach(la => GRID_LONS.forEach(lo => GRID_POINTS.push([la, lo])));
+
+  let gridData = null; 
+  let windLayer = null;
+  const BASE_ZOOM = map.getZoom();
+  const BASE_MULTIPLIER = 1/140;
+
+  function multiplierForZoom(z){ return BASE_MULTIPLIER * Math.pow(0.58, z - BASE_ZOOM); }
+
+  function buildWindGridUrl(pastDays, forecastDays){
+    const lats = GRID_POINTS.map(p => p[0]).join(',');
+    const lons = GRID_POINTS.map(p => p[1]).join(',');
+    // 將選定的氣象預報中心模型動態傳入 models 參數
+    return `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}` +
+      `&daily=wind_speed_10m_max,wind_direction_10m_dominant&models=${currentModel}` +
+      `&wind_speed_unit=ms&past_days=${pastDays}&forecast_days=${forecastDays}&timezone=UTC`;
+  }
+
+  function velocityOptions(data, multiplier){
+    return {
+      displayValues: true,
+      displayOptions: {
+        velocityType: '風場', position: 'bottomleft', emptyString: '無風場資料',
+        angleConvention: 'bearingCW', speedUnit: 'ms', directionString: '風向', speedString: '風速'
+      },
+      data: data, minVelocity: 0, maxVelocity: 15, velocityScale: 0.012,
+      colorScale: ['#3a86e0','#43d9e0','#8be07a','#f2d544','#f2924a','#f2545b'],
+      lineWidth: 1.4, particleAge: 90, particleMultiplier: multiplier
+    };
+  }
+
+  function buildWindGridData(idx){
+    const nx = GRID_LONS.length, ny = GRID_LATS.length;
+    const uData = new Array(nx*ny);
+    const vData = new Array(nx*ny);
+    
+    // 依據 Open-Meteo 回傳的模型標籤動態讀取
+    const modelKey = currentModel === 'gfs_seamless' ? 'gfs_seamless' : (currentModel === 'icon_seamless' ? 'icon_seamless' : 'ecmwf_ifs_025');
+    
+    GRID_POINTS.forEach((p, i) => {
+      const targetData = gridData.byPoint[i][modelKey];
+      const speed = targetData ? (targetData.speed[idx] || 0) : 0;
+      const dirDeg = targetData ? (targetData.dir[idx] || 0) : 0;
+      const rad = dirDeg * Math.PI / 180;
+      
+      // 修正後的精確氣象流向換算向量公式
+      uData[i] = -speed * Math.sin(rad);
+      vData[i] = -speed * Math.cos(rad);
+    });
+
+    const header = {
+      parameterUnit: 'm.s-1', parameterCategory: 2,
+      la1: GRID_LATS[0], lo1: GRID_LONS[0], la2: GRID_LATS[GRID_LATS.length-1], lo2: GRID_LONS[GRID_LONS.length-1],
+      dx: GRID_LON_STEP, dy: GRID_LAT_STEP, nx: nx, ny: ny, refTime: gridData.time[idx]
+    };
+    return [
+      { header: Object.assign({}, header, { parameterNumber: 2, parameterNumberName: 'U-component_of_wind' }), data: uData },
+      { header: Object.assign({}, header, { parameterNumber: 3, parameterNumberName: 'V-component_of_wind' }), data: vData }
+    ];
+  }
+
+  function rebuildWindLayer(idx){
+    if (!gridData) return;
+    const wasOn = document.getElementById('toggleWind').checked;
+    if (windLayer){ map.removeLayer(windLayer); }
+    windLayer = L.velocityLayer(velocityOptions(buildWindGridData(idx), multiplierForZoom(map.getZoom())));
+    if (wasOn){ windLayer.addTo(map); }
+  }
+
+  let zoomDebounce = null;
+  map.on('zoomend', () => {
+    clearTimeout(zoomDebounce);
+    zoomDebounce = setTimeout(() => rebuildWindLayer(parseInt(slider.value, 10)), 180);
+  });
+
+  function loadWindGrid(pastDays, forecastDays){
+    const modelNames = { 'ecmwf_ifs_025': 'ECMWF', 'gfs_seamless': 'GFS', 'icon_seamless': 'ICON' };
+    showToast(`正在連線 ${modelNames[currentModel]} 擷取大氣網格…`);
+    
+    fetch(buildWindGridUrl(pastDays, forecastDays))
+      .then(r => { if(!r.ok) throw new Error(`Open-Meteo 回應錯誤 (HTTP ${r.status})`); return r.json(); })
+      .then(list => {
+        if (list && list.error) throw new Error(`Open-Meteo: ${list.reason || '未知錯誤'}`);
+        // Open-Meteo 多模型時回傳結構會依據模型名稱給予對應的欄位字串
+        const speedKey = `wind_speed_10m_max_${currentModel}`;
+        const dirKey = `wind_direction_10m_dominant_${currentModel}`;
+        const modelKey = currentModel;
+
+        gridData = {
+          time: list[0].daily.time,
+          byPoint: list.map(loc => {
+            const res = {};
+            res[modelKey] = {
+              speed: loc.daily[speedKey] || loc.daily.wind_speed_10m_max || [],
+              dir: loc.daily[dirKey] || loc.daily.wind_direction_10m_dominant || []
+            };
+            return res;
+          })
+        };
+        rebuildWindLayer(parseInt(slider.value, 10));
+        hideToast();
+      })
+      .catch(err => {
+        showToast(`⚠ 風場資料載入失敗：${err.message}`, 5000);
+        console.error(err);
+      });
+  }
+
+  // 3. 多模型切換 UI 事件監聽
+  document.querySelectorAll('.model-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      if (this.classList.contains('active')) return;
+      document.querySelectorAll('.model-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      
+      currentModel = this.getAttribute('data-model');
+      loadWindGrid(DAYS_PAST, DAYS_FUTURE + 1); // 重新載入對應氣象局的模型資料（含未來預報）
+    });
+  });
+
+  // 4. 日期軸與播放控制系統
+  function fmt(d){ return d.toISOString().slice(0,10); }
+  const DAYS_PAST = 9;     // 過去 9 天（觀測）
+  const DAYS_FUTURE = 9;   // 未來 9 天（僅風場有預報）
+  const DAYS = DAYS_PAST + DAYS_FUTURE + 1; // +1 = 今日
+  const TODAY_IDX = DAYS_PAST;
+  const dateList = [];
+  const today = new Date();
+  for (let i = -DAYS_PAST; i <= DAYS_FUTURE; i++){
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() + i);
+    dateList.push(fmt(d));
+  }
+  const slider = document.getElementById('timeSlider');
+  slider.max = DAYS - 1;
+  slider.value = TODAY_IDX;
+
+  let isFutureIdx = false;
+  let futureNoticeShown = false;
+
+  function updateDateLabel(idx){
+    const label = document.getElementById('dateLabel');
+    const relative = idx - TODAY_IDX;
+    const relTxt = relative === 0 ? '今日' : (relative < 0 ? `−${-relative} 天` : `+${relative} 天（預報）`);
+    label.innerHTML = dateList[idx] + `<span class="tag">${relTxt} · 數值預報／觀測日期 (UTC)</span>`;
+  }
+  function applyLayersForIndex(idx){
+    isFutureIdx = idx > TODAY_IDX;
+    if (isFutureIdx){
+      // 衛星雲圖與降雨為觀測性資料，NASA GIBS 沒有未來日期的影像，暫時隱藏並提示
+      satLayers[0].setOpacity(0); satLayers[1].setOpacity(0);
+      precipLayers[0].setOpacity(0); precipLayers[1].setOpacity(0);
+      if (!futureNoticeShown){
+        showToast('⚠ 衛星雲圖／降雨為觀測資料，無未來影像；+9 天僅風場提供數值預報', 4500);
+        futureNoticeShown = true;
+      }
+    } else {
+      futureNoticeShown = false;
+      setLayerDatesSmooth(dateList[idx]);
+    }
+    rebuildWindLayer(idx);
+  }
+  slider.addEventListener('input', () => {
+    const idx = parseInt(slider.value, 10);
+    updateDateLabel(idx);
+    applyLayersForIndex(idx);
+  });
+
+  // 首次初始化（預設停在「今日」）
+  updateDateLabel(TODAY_IDX);
+  satLayers[currentIdx].setUrl(gibsUrl(dateList[TODAY_IDX]));
+  satLayers[currentIdx].setOpacity(userOpacity);
+  precipLayers[currentIdx].setUrl(precipUrl(dateList[TODAY_IDX]));
+  precipLayers[currentIdx].setOpacity(0.85);
+
+  loadWindGrid(DAYS_PAST, DAYS_FUTURE + 1);
+
+  let playTimer = null;
+  const playBtn = document.getElementById('playBtn');
+  const playIcon = document.getElementById('playIcon');
+  const pauseIcon = document.getElementById('pauseIcon');
+  playBtn.addEventListener('click', () => {
+    if (playTimer){
+      clearInterval(playTimer); playTimer = null;
+      playIcon.style.display = ''; pauseIcon.style.display = 'none';
+      return;
+    }
+    playIcon.style.display = 'none'; pauseIcon.style.display = '';
+    playTimer = setInterval(() => {
+      let idx = parseInt(slider.value, 10) + 1;
+      if (idx > slider.max){ idx = 0; }
+      slider.value = idx;
+      updateDateLabel(idx);
+      applyLayersForIndex(idx);
+    }, 1600);
+  });
+
+  // 5. 圖層開關與透明度
+  document.getElementById('toggleSat').addEventListener('change', e => {
+    document.getElementById('chipSat').classList.toggle('active', e.target.checked);
+    if (isFutureIdx) return; // 未來日期沒有衛星影像可顯示
+    satLayers[currentIdx].setOpacity(e.target.checked ? userOpacity : 0);
+    satLayers[currentIdx === 0 ? 1 : 0].setOpacity(0);
+  });
+  document.getElementById('togglePrecip').addEventListener('change', e => {
+    document.getElementById('chipPrecip').classList.toggle('active', e.target.checked);
+    if (isFutureIdx) return; // 未來日期沒有降雨觀測影像可顯示
+    precipLayers[currentIdx].setOpacity(e.target.checked ? 0.85 : 0);
+    precipLayers[currentIdx === 0 ? 1 : 0].setOpacity(0);
+  });
+  document.getElementById('toggleWind').addEventListener('change', e => {
+    document.getElementById('chipWind').classList.toggle('active', e.target.checked);
+    if (!windLayer) return;
+    if (e.target.checked) windLayer.addTo(map); else map.removeLayer(windLayer);
+  });
+  document.getElementById('satOpacity').addEventListener('input', e => {
+    userOpacity = parseInt(e.target.value, 10) / 100;
+    if (document.getElementById('toggleSat').checked) { satLayers[currentIdx].setOpacity(userOpacity); }
+  });
+
+  // 6. Geolocation 定位
+  let geoMarker = null;
+  document.getElementById('locateBtn').addEventListener('click', function(){
+    if (!navigator.geolocation){ showToast('此瀏覽器不支援地理定位', 3000); return; }
+    const btn = this; btn.classList.add('busy');
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        btn.classList.remove('busy');
+        const { latitude, longitude } = pos.coords;
+        const icon = L.divIcon({
+          className: '', html: '<div class="geo-pulse"><div class="ring"></div><div class="core"></div></div>',
+          iconSize: [16,16], iconAnchor: [8,8]
+        });
+        if (geoMarker) map.removeLayer(geoMarker);
+        geoMarker = L.marker([latitude, longitude], { icon }).addTo(map);
+        map.flyTo([latitude, longitude], 7, { duration: 1.2 });
+        showToast(`已定位到 ${latitude.toFixed(3)}°, ${longitude.toFixed(3)}°`, 3000);
+      },
+      err => { btn.classList.remove('busy'); showToast('無法取得位置，請確認定位權限', 3500); },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  });
+
+})();
+</script>
+</body>
+</html>
