@@ -148,7 +148,7 @@
   .leaflet-popup-content{ margin:12px 14px !important; }
   .leaflet-popup-close-button{ color:var(--text-lo) !important; }
 
-  .weather-card{ font-family:'Space Grotesk', system-ui, sans-serif; min-width:220px; }
+  .weather-card{ font-family:'Space Grotesk', system-ui, sans-serif; width:296px; }
   .wc-header{ font-size:11px; color:var(--text-lo); letter-spacing:.05em; margin-bottom:6px; }
   .wc-current{ display:flex; align-items:center; gap:8px; margin-bottom:10px; }
   .wc-current .wc-emoji{ font-size:28px; line-height:1; }
@@ -156,11 +156,11 @@
   .wc-current .wc-meta{ display:flex; flex-direction:column; margin-left:2px; }
   .wc-current .wc-desc{ font-size:12px; color:var(--text-hi); }
   .wc-current .wc-extra{ font-size:10px; color:var(--text-lo); font-family:'IBM Plex Mono', monospace; }
-  .wc-week{ display:flex; gap:4px; border-top:1px solid var(--line); padding-top:8px; }
-  .wc-day{ flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; font-size:9.5px; }
+  .wc-week{ display:flex; gap:2px; border-top:1px solid var(--line); padding-top:8px; }
+  .wc-day{ flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; gap:2px; font-size:9.5px; }
   .wc-day .d{ color:var(--text-lo); }
   .wc-day .e{ font-size:15px; margin:1px 0; }
-  .wc-day .t{ font-family:'IBM Plex Mono', monospace; font-size:9px; }
+  .wc-day .t{ font-family:'IBM Plex Mono', monospace; font-size:8.5px; white-space:nowrap; }
   .wc-day .t .hi{ color:var(--text-hi); }
   .wc-day .t .lo{ color:var(--text-lo); }
   .wc-day .p{ color:var(--cyan); font-size:8.5px; }
@@ -806,7 +806,7 @@
   }
 
   function loadLocalWeather(marker, lat, lon){
-    marker.bindPopup('<div class="weather-card mono"><div class="wc-loading">正在載入當地天氣與未來一週預報…</div></div>').openPopup();
+    marker.bindPopup('<div class="weather-card mono"><div class="wc-loading">正在載入當地天氣與未來一週預報…</div></div>', { maxWidth: 320, minWidth: 296 }).openPopup();
     fetchAndRenderWeather(lat, lon, html => marker.setPopupContent(html));
   }
 
@@ -836,7 +836,7 @@
   // 7. 點擊地圖任一位置查詢當地天氣與未來 7 天預報
   map.on('click', e => {
     const { lat, lng } = e.latlng;
-    const clickPopup = L.popup({ maxWidth: 260, closeButton: true })
+    const clickPopup = L.popup({ maxWidth: 320, minWidth: 296, closeButton: true })
       .setLatLng(e.latlng)
       .setContent('<div class="weather-card mono"><div class="wc-loading">正在載入當地天氣與未來一週預報…</div></div>')
       .openOn(map);
